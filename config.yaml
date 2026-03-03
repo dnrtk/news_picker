@@ -2,7 +2,7 @@ schedule:
   time: "07:30"
 
 tts:
-  engine: voicevox          # voicevox | gtts
+  engine: voicevox
   voicevox:
     host: "http://localhost:50021"
     speaker_id: 3

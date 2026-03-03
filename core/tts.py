@@ -1,7 +1,5 @@
 import logging
 import re
-import shutil
-from io import BytesIO
 from pathlib import Path
 
 import requests
@@ -14,7 +12,6 @@ class TTSModule:
         self.config = tts_config
         self.tmp_dir = tmp_dir
         self.tmp_dir.mkdir(exist_ok=True)
-        self.engine = tts_config.get("engine", "voicevox")
 
         vox_cfg = tts_config.get("voicevox", {})
         self.voicevox_host = vox_cfg.get("host", "http://localhost:50021")
@@ -27,12 +24,10 @@ class TTSModule:
         chunks = self._split_text(text)
         logger.info(f"[tts] {len(chunks)} チャンクに分割")
 
-        if self.engine == "voicevox" and self._check_voicevox():
-            return self._synthesize_voicevox(chunks)
-        else:
-            if self.engine == "voicevox":
-                logger.warning("[tts] VOICEVOX 接続不可。gTTS にフォールバック")
-            return self._synthesize_gtts(chunks)
+        if not self._check_voicevox():
+            logger.error("[tts] VOICEVOX に接続できません。VOICEVOXを起動してから再実行してください。")
+            return []
+        return self._synthesize_voicevox(chunks)
 
     def _split_text(self, text: str, max_len: int = 200) -> list[str]:
         """句点・改行で分割し、max_len 文字以内のチャンクにまとめる。"""
@@ -89,24 +84,8 @@ class TTSModule:
                 logger.error(f"[tts] VOICEVOX チャンク {i} 失敗: {e}")
         return files
 
-    def _synthesize_gtts(self, chunks: list[str]) -> list[Path]:
-        from gtts import gTTS
-        files: list[Path] = []
-        for i, chunk in enumerate(chunks):
-            out_path = self.tmp_dir / f"{i:04d}.mp3"
-            try:
-                tts = gTTS(text=chunk, lang="ja")
-                tts.save(str(out_path))
-                files.append(out_path)
-                logger.info(f"[tts] gTTS [{i+1}/{len(chunks)}] -> {out_path.name}")
-            except Exception as e:
-                logger.error(f"[tts] gTTS チャンク {i} 失敗: {e}")
-        return files
-
     def cleanup(self):
         """tmp ディレクトリの音声ファイルを削除する。"""
         for f in self.tmp_dir.glob("*.wav"):
-            f.unlink()
-        for f in self.tmp_dir.glob("*.mp3"):
             f.unlink()
         logger.info("[tts] 一時ファイルを削除しました")

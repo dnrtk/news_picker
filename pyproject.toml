@@ -6,7 +6,6 @@ requires-python = ">=3.10"
 dependencies = [
     "feedparser>=6.0.12",
     "google-genai>=1.65.0",
-    "gtts>=2.5.4",
     "pygame>=2.6.1",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0.3",

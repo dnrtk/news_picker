@@ -47,7 +47,7 @@ news_picker/
 │   ├── base_plugin.py        # BasePlugin 抽象クラス
 │   ├── plugin_runner.py      # プラグイン管理・実行
 │   ├── script_generator.py   # 原稿テキスト生成・結合
-│   ├── tts.py                # VOICEVOX / フォールバック TTS
+│   ├── tts.py                # VOICEVOX TTS
 │   └── player.py             # 音声再生
 │
 ├── plugins/
@@ -251,10 +251,10 @@ class BasePlugin(ABC):
 | `speed_scale` | 1.1 | 読み上げ速度 |
 | `volume_scale` | 1.0 | 音量 |
 
-**フォールバック（VOICEVOX 接続不可時）**
+**VOICEVOX 接続不可時**
 
-- `gTTS`（Google Text-to-Speech）で MP3 生成 → WAV に変換
-- ログに警告を出力
+- エラーログを出力して実行を中断する（フォールバックなし）
+- VOICEVOXはローカルで事前起動しておく必要がある
 
 **テキスト分割方針**
 
@@ -282,7 +282,7 @@ schedule:
   time: "07:30"
 
 tts:
-  engine: voicevox          # voicevox | gtts
+  engine: voicevox
   voicevox:
     host: "http://localhost:50021"
     speaker_id: 3
@@ -365,12 +365,11 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "feedparser",
-    "google-generativeai",
+    "google-genai",
     "python-dotenv",
     "pyyaml",
     "pygame",
     "requests",
-    "gtts",
 ]
 ```
 
@@ -383,8 +382,7 @@ dependencies = [
 | TimeTree API エラー | スキップして次のプラグインへ。ログに記録 |
 | RSS 取得失敗 | スキップ。ログに記録 |
 | LLM API エラー | リトライ最大3回。失敗時は原文タイトルのみ読み上げ |
-| VOICEVOX 接続不可 | gTTS にフォールバック |
-| gTTS も失敗 | 実行を中断。エラーログ記録 |
+| VOICEVOX 接続不可 | 実行を中断。エラーログ記録 |
 
 ---
 
