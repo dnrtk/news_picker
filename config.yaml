@@ -1,0 +1,28 @@
+schedule:
+  time: "07:30"
+
+tts:
+  engine: voicevox          # voicevox | gtts
+  voicevox:
+    host: "http://localhost:50021"
+    speaker_id: 3
+    speed_scale: 1.1
+    volume_scale: 1.0
+
+plugins:
+  # timetree は別ツールとして開発中。後で統合予定。
+  # - name: timetree
+  #   enabled: false
+  #   order: 1
+
+  - name: news
+    enabled: true
+    order: 2
+    max_items: 15
+    sources:
+      - type: rss
+        url: "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
+        label: "Google ニュース"
+      - type: rss
+        url: "https://www3.nhk.or.jp/rss/news/cat0.xml"
+        label: "NHK トップ"

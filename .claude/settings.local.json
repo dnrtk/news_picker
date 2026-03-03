@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv add feedparser google-generativeai python-dotenv pyyaml pygame requests gtts)"
+    ]
+  }
+}
