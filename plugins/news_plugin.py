@@ -2,8 +2,10 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import feedparser
+import yaml
 from google import genai
 
 from core.base_plugin import BasePlugin, ContentItem
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 MODELS = ["gemini-3-flash-preview", "gemini-2.5-flash"]  # 優先順にフォールバック
 BATCH_SIZE = 10  # 1リクエストにまとめる最大件数
+LOG_DIR = Path("logs")
 
 BATCH_PROMPT = """\
 以下の{n}件のニュース記事を、それぞれラジオで読み上げるための日本語で2〜4文に要約してください。
@@ -39,15 +42,21 @@ class NewsPlugin(BasePlugin):
         self._genai_client = genai.Client(api_key=api_key)
 
     def fetch(self) -> list[ContentItem]:
-        raw_entries = self._fetch_rss()
+        fetched_at = datetime.now(timezone.utc).astimezone()
+
+        raw_entries = self._fetch_rss()  # list of (entry, source_dict)
         deduped = self._deduplicate(raw_entries)
-        sorted_entries = sorted(deduped, key=lambda e: e.get("published_parsed") or (), reverse=True)
+        sorted_entries = sorted(
+            deduped,
+            key=lambda es: es[0].get("published_parsed") or (),
+            reverse=True,
+        )
         top_entries = sorted_entries[: self.max_items]
 
-        # (title, body) のリストを作成
+        # (title, body) のリストを作成（要約用）
         articles = [
             (e.get("title", "").strip(), e.get("summary", e.get("title", "")).strip())
-            for e in top_entries
+            for e, _ in top_entries
         ]
 
         # BATCH_SIZE 件ずつまとめて要約
@@ -57,34 +66,88 @@ class NewsPlugin(BasePlugin):
             batch_summaries = self._summarize_batch(batch)
             summaries.extend(batch_summaries)
 
+        # ニュースログを保存
+        self._write_news_log(fetched_at, top_entries, articles, summaries)
+
         items = []
         for (title, _), summary in zip(articles, summaries):
             items.append(ContentItem(title=title, body=summary, source=self.name))
         return items
 
-    def _fetch_rss(self) -> list[dict]:
-        entries = []
+    def _fetch_rss(self) -> list[tuple[dict, dict]]:
+        """各エントリを (entry, source_dict) のタプルで返す。"""
+        entries: list[tuple[dict, dict]] = []
         for source in self.sources:
             url = source.get("url", "")
             label = source.get("label", url)
             try:
                 feed = feedparser.parse(url)
                 logger.info(f"[news] {label}: {len(feed.entries)} 件取得")
-                entries.extend(feed.entries)
+                for entry in feed.entries:
+                    entries.append((entry, source))
             except Exception as e:
                 logger.error(f"[news] {label} RSS 取得失敗: {e}")
         return entries
 
-    def _deduplicate(self, entries: list[dict]) -> list[dict]:
+    def _deduplicate(self, entries: list[tuple[dict, dict]]) -> list[tuple[dict, dict]]:
         seen_titles: set[str] = set()
         result = []
-        for entry in entries:
+        for entry, source in entries:
             title = entry.get("title", "").strip()
             normalized = title[:20]
             if normalized not in seen_titles:
                 seen_titles.add(normalized)
-                result.append(entry)
+                result.append((entry, source))
         return result
+
+    def _write_news_log(
+        self,
+        fetched_at: datetime,
+        top_entries: list[tuple[dict, dict]],
+        articles: list[tuple[str, str]],
+        summaries: list[str],
+    ) -> None:
+        """logs/YYYYMMDD_news.yaml にニュースの詳細情報を書き出す。"""
+        LOG_DIR.mkdir(exist_ok=True)
+        log_path = LOG_DIR / f"{fetched_at.strftime('%Y%m%d')}_news.yaml"
+
+        article_records = []
+        for i, ((entry, source), (title, raw_body), summary) in enumerate(
+            zip(top_entries, articles, summaries), start=1
+        ):
+            # published_parsed は time.struct_time なので ISO 文字列に変換
+            published_at = ""
+            if entry.get("published_parsed"):
+                try:
+                    import calendar
+                    ts = calendar.timegm(entry["published_parsed"])
+                    published_at = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                except Exception:
+                    pass
+
+            article_records.append({
+                "index": i,
+                "title": title,
+                "source_label": source.get("label", ""),
+                "source_url": source.get("url", ""),
+                "article_url": entry.get("link", ""),
+                "published_at": published_at,
+                "raw_body": raw_body,
+                "summary": summary,
+            })
+
+        log_data = {
+            "fetched_at": fetched_at.isoformat(),
+            "count": len(article_records),
+            "articles": article_records,
+        }
+
+        try:
+            with open(log_path, "w", encoding="utf-8") as f:
+                yaml.dump(log_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            logger.info(f"[news] ニュースログを保存しました: {log_path}")
+        except Exception as e:
+            logger.error(f"[news] ニュースログの保存に失敗しました: {e}")
 
     def _summarize_batch(self, articles: list[tuple[str, str]], retries: int = 3) -> list[str]:
         """複数記事を1リクエストでまとめて要約する。失敗時はタイトルのリストを返す。"""

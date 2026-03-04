@@ -168,7 +168,8 @@ class BasePlugin(ABC):
 3. 公開日時の新しい順にソート
 4. 上位 N 件を取得
 5. 各記事を Gemini API で要約（2〜4文）
-5. `ContentItem` に変換して返す
+6. `logs/YYYYMMDD_news.yaml` にニュースログを書き出す
+7. `ContentItem` に変換して返す
 
 **LLM 要約プロンプト（1件ごと）**
 
@@ -181,10 +182,41 @@ class BasePlugin(ABC):
 ```
 
 **Gemini API 利用について**
-- ライブラリ：`google-generativeai`
-- モデル：`gemini-2.5-flash`
+- ライブラリ：`google-genai`
+- モデル：`gemini-3-flash-preview`（失敗時 `gemini-2.5-flash` へフォールバック）
 - 無料枠：1分あたり15リクエスト、1日1500リクエスト（2025年時点）
-- 認証：Google AI Studio で取得した API キーを `.env` に保存
+- 認証：Google AI Studio で取得した API キーを環境変数 `GEMINI_API_KEY` に設定
+
+**ニュースログ（`logs/YYYYMMDD_news.yaml`）**
+
+実行日ごとに以下の形式で保存する。ファイルが既に存在する場合は上書き。
+
+```yaml
+fetched_at: "2026-03-04T07:30:15+09:00"
+count: 5
+articles:
+  - index: 1
+    title: "記事タイトル"
+    source_label: "Google ニュース"
+    source_url: "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
+    article_url: "https://actual-article.example.com/..."
+    published_at: "2026-03-04T06:00:00+09:00"
+    raw_body: "元の記事本文（feedparser の summary フィールド）"
+    summary: "要約後のテキスト（Gemini API の出力）"
+```
+
+| フィールド | 説明 |
+|---|---|
+| `fetched_at` | fetch() 実行開始日時（ISO 8601） |
+| `count` | 保存した記事数 |
+| `index` | 読み上げ順（1始まり） |
+| `title` | 記事タイトル |
+| `source_label` | config.yaml に定義したソース名 |
+| `source_url` | RSS フィードの URL |
+| `article_url` | 記事本文へのリンク（feedparser の `link`） |
+| `published_at` | 記事の公開日時（ISO 8601、不明時は空文字） |
+| `raw_body` | 要約前の記事テキスト（feedparser の `summary`） |
+| `summary` | Gemini API による要約テキスト |
 
 **format() の出力例**
 
