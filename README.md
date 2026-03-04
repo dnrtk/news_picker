@@ -22,8 +22,8 @@
 
 ## 前提条件
 
-- [VOICEVOX](https://voicevox.hiroshiba.jp/) がローカルで起動済み（`http://localhost:50021`）
 - `GEMINI_API_KEY` が環境変数に設定済み
+- VOICEVOX ENGINE は**初回実行時に自動ダウンロード**されます（約 1〜2 GB）
 
 ## セットアップ
 
@@ -64,6 +64,7 @@ uv run python main.py
 ```yaml
 tts:
   voicevox:
+    engine_dir: "voicevox_engine"  # ENGINE の保存先（なければ自動ダウンロード）
     speaker_id: 3        # 話者（3: ずんだもん）
     speed_scale: 1.1     # 読み上げ速度
     volume_scale: 1.0    # 音量
@@ -105,7 +106,19 @@ news_picker/
 └── logs/                   # 実行ログ
 ```
 
+## VOICEVOX ENGINE について
+
+VOICEVOX ENGINE は起動時に自動で管理されます。
+
+| 状況 | 動作 |
+|------|------|
+| `voicevox_engine/run.exe` が存在する | そのまま起動 |
+| `voicevox_engine/` が存在しない | GitHub から自動ダウンロード（約 1〜2 GB） |
+| VOICEVOX が既に別プロセスで起動中 | そちらをそのまま使用 |
+
+終了時にプロセスを自動終了します。手動で起動していた場合は終了しません。
+
 ## 注意事項
 
-- VOICEVOX が起動していない場合はエラーで終了します（フォールバックなし）
 - Gemini API は無料枠（1日 1500 リクエスト）を使用。1回の実行で最大 2 リクエスト
+- 初回実行時はダウンロードのため数分〜十数分かかります

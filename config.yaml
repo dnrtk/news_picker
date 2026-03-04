@@ -8,6 +8,8 @@ tts:
     speaker_id: 3
     speed_scale: 1.1
     volume_scale: 1.0
+    engine_dir: "voicevox_engine"  # ENGINE の exe を置くディレクトリ（なければ自動ダウンロード）
+    download_url: "https://github.com/VOICEVOX/voicevox_engine/releases/download/0.25.1/voicevox_engine-windows-cpu-0.25.1.7z.001"
 
 plugins:
   # timetree は別ツールとして開発中。後で統合予定。
