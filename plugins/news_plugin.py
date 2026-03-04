@@ -10,6 +10,7 @@ from google import genai
 
 from core.base_plugin import BasePlugin, ContentItem
 from core.config_loader import get_env
+from core.tts import PAUSE_MARKER
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +19,16 @@ BATCH_SIZE = 10  # 1リクエストにまとめる最大件数
 LOG_DIR = Path("logs")
 
 BATCH_PROMPT = """\
-以下の{n}件のニュース記事を、それぞれラジオで読み上げるための日本語で2〜4文に要約してください。
+以下の{n}件のニュース記事を、それぞれラジオで読み上げるための日本語に変換してください。
 語尾は「〜です。〜ます。」調で統一し、固有名詞はそのまま使用してください。
 記号や括弧は使わず、自然に読み上げられる文章にしてください。
 
+各記事について以下の2つを生成してください：
+- title: 記事を10文字以内で表す読み上げ用短縮タイトル（例：「日銀の発表」「米中の関係」）
+- summary: 4〜5文の要約
+
 必ず以下のJSON形式のみで返してください（他のテキストは不要）:
-{{"summaries": ["1件目の要約", "2件目の要約", ...]}}
+{{"articles": [{{"title": "短縮タイトル1", "summary": "要約1"}}, {{"title": "短縮タイトル2", "summary": "要約2"}}, ...]}}
 
 {articles}"""
 
@@ -60,7 +65,7 @@ class NewsPlugin(BasePlugin):
         ]
 
         # BATCH_SIZE 件ずつまとめて要約
-        summaries: list[str] = []
+        summaries: list[tuple[str, str]] = []
         for i in range(0, len(articles), BATCH_SIZE):
             batch = articles[i : i + BATCH_SIZE]
             batch_summaries = self._summarize_batch(batch)
@@ -70,8 +75,8 @@ class NewsPlugin(BasePlugin):
         self._write_news_log(fetched_at, top_entries, articles, summaries)
 
         items = []
-        for (title, _), summary in zip(articles, summaries):
-            items.append(ContentItem(title=title, body=summary, source=self.name))
+        for (title, _), (read_title, summary) in zip(articles, summaries):
+            items.append(ContentItem(title=title, body=summary, source=self.name, read_title=read_title))
         return items
 
     def _fetch_rss(self) -> list[tuple[dict, dict]]:
@@ -105,14 +110,14 @@ class NewsPlugin(BasePlugin):
         fetched_at: datetime,
         top_entries: list[tuple[dict, dict]],
         articles: list[tuple[str, str]],
-        summaries: list[str],
+        summaries: list[tuple[str, str]],
     ) -> None:
         """logs/YYYYMMDD_news.yaml にニュースの詳細情報を書き出す。"""
         LOG_DIR.mkdir(exist_ok=True)
         log_path = LOG_DIR / f"{fetched_at.strftime('%Y%m%d')}_news.yaml"
 
         article_records = []
-        for i, ((entry, source), (title, raw_body), summary) in enumerate(
+        for i, ((entry, source), (title, raw_body), (read_title, summary)) in enumerate(
             zip(top_entries, articles, summaries), start=1
         ):
             # published_parsed は time.struct_time なので ISO 文字列に変換
@@ -133,6 +138,7 @@ class NewsPlugin(BasePlugin):
                 "article_url": entry.get("link", ""),
                 "published_at": published_at,
                 "raw_body": raw_body,
+                "read_title": read_title,
                 "summary": summary,
             })
 
@@ -149,7 +155,7 @@ class NewsPlugin(BasePlugin):
         except Exception as e:
             logger.error(f"[news] ニュースログの保存に失敗しました: {e}")
 
-    def _summarize_batch(self, articles: list[tuple[str, str]], retries: int = 3) -> list[str]:
+    def _summarize_batch(self, articles: list[tuple[str, str]], retries: int = 3) -> list[tuple[str, str]]:
         """複数記事を1リクエストでまとめて要約する。失敗時はタイトルのリストを返す。"""
         articles_text = "\n\n".join(
             ARTICLE_TEMPLATE.format(i=i + 1, title=title, body=body[:400])
@@ -164,11 +170,11 @@ class NewsPlugin(BasePlugin):
             logger.warning(f"[news] {model} 失敗。次のモデルへ")
 
         logger.error("[news] 全モデルで要約失敗。タイトルのみ使用")
-        return [title for title, _ in articles]
+        return [(title, title) for title, _ in articles]
 
     def _try_summarize_batch(
         self, prompt: str, articles: list[tuple[str, str]], model: str, retries: int
-    ) -> list[str] | None:
+    ) -> list[tuple[str, str]] | None:
         for attempt in range(retries):
             try:
                 response = self._genai_client.models.generate_content(
@@ -182,12 +188,12 @@ class NewsPlugin(BasePlugin):
                     if text.startswith("json"):
                         text = text[4:]
                 data = json.loads(text)
-                summaries = data["summaries"]
-                if len(summaries) == len(articles):
+                pairs = [(a["title"], a["summary"]) for a in data["articles"]]
+                if len(pairs) == len(articles):
                     logger.info(f"[news] バッチ要約成功 ({model}): {len(articles)} 件")
-                    return summaries
-                logger.warning(f"[news] 件数不一致: 期待{len(articles)}件 / 実際{len(summaries)}件")
-                return self._pad_summaries(summaries, articles)
+                    return pairs
+                logger.warning(f"[news] 件数不一致: 期待{len(articles)}件 / 実際{len(pairs)}件")
+                return self._pad_summaries(pairs, articles)
             except Exception as e:
                 err_str = str(e)
                 # 503はリトライせず即座に次のモデルへ
@@ -208,11 +214,12 @@ class NewsPlugin(BasePlugin):
                     time.sleep(wait)
         return None
 
-    def _pad_summaries(self, summaries: list[str], articles: list[tuple[str, str]]) -> list[str]:
+    def _pad_summaries(self, summaries: list[tuple[str, str]], articles: list[tuple[str, str]]) -> list[tuple[str, str]]:
         """件数が足りない場合にタイトルで補完する。"""
         result = list(summaries)
         while len(result) < len(articles):
-            result.append(articles[len(result)][0])
+            title = articles[len(result)][0]
+            result.append((title, title))
         return result[: len(articles)]
 
     def format(self, items: list[ContentItem]) -> str:
@@ -222,8 +229,12 @@ class NewsPlugin(BasePlugin):
         today = datetime.now(timezone.utc).astimezone()
         date_str = f"{today.month}月{today.day}日"
 
-        lines = [f"続いて、{date_str}のニュースをお伝えします。"]
+        opening = f"続いて、{date_str}のニュースをお伝えします。"
+        news_lines = []
         for i, item in enumerate(items, start=1):
-            lines.append(f"{i}件目。{item.body}")
-        lines.append("以上、本日のニュースをお伝えしました。")
-        return "\n".join(lines)
+            read_title = item.read_title or item.title
+            news_lines.append(f"{i}件目。{read_title}。{item.body}")
+        closing = "以上、本日のニュースをお伝えしました。"
+
+        news_block = f"\n{PAUSE_MARKER}\n".join(news_lines)
+        return f"{opening}\n{news_block}\n{closing}"

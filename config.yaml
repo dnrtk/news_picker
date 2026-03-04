@@ -28,3 +28,6 @@ plugins:
       - type: rss
         url: "https://www3.nhk.or.jp/rss/news/cat0.xml"
         label: "NHK トップ"
+      # - type: rss
+      #   url: "https://mainichi.jp/rss/etc/mainichi-flash.rss"
+      #   label: "毎日新聞"

@@ -1,8 +1,10 @@
 import logging
 import re
 import shutil
+import struct
 import subprocess
 import time
+import wave
 import zipfile
 from pathlib import Path
 
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API_URL = "https://api.github.com/repos/VOICEVOX/voicevox_engine/releases/latest"
 ENGINE_STARTUP_TIMEOUT = 90  # seconds
+PAUSE_MARKER = "[PAUSE]"
 
 
 class TTSModule:
@@ -234,23 +237,36 @@ class TTSModule:
             return False
 
     def _split_text(self, text: str, max_len: int = 200) -> list[str]:
-        """句点・改行で分割し、max_len 文字以内のチャンクにまとめる。"""
-        sentences = re.split(r'(?<=[。！？\n])', text)
-        chunks: list[str] = []
-        current = ""
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-            if len(current) + len(sentence) <= max_len:
-                current += sentence
-            else:
-                if current:
-                    chunks.append(current)
-                current = sentence
-        if current:
-            chunks.append(current)
-        return chunks
+        """句点・改行で分割し、max_len 文字以内のチャンクにまとめる。PAUSE_MARKER は単独チャンクとして保持する。"""
+        segments = text.split(PAUSE_MARKER)
+        all_chunks: list[str] = []
+        for seg_idx, segment in enumerate(segments):
+            sentences = re.split(r'(?<=[。！？\n])', segment)
+            current = ""
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                if len(current) + len(sentence) <= max_len:
+                    current += sentence
+                else:
+                    if current:
+                        all_chunks.append(current)
+                    current = sentence
+            if current:
+                all_chunks.append(current)
+            if seg_idx < len(segments) - 1:
+                all_chunks.append(PAUSE_MARKER)
+        return all_chunks
+
+    def _generate_silence_wav(self, out_path: Path, duration: float = 1.0, sample_rate: int = 24000) -> None:
+        """無音の WAV ファイルを生成する。"""
+        num_samples = int(sample_rate * duration)
+        with wave.open(str(out_path), "w") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(sample_rate)
+            wf.writeframes(struct.pack("<" + "h" * num_samples, *([0] * num_samples)))
 
     def _check_voicevox(self) -> bool:
         try:
@@ -263,6 +279,11 @@ class TTSModule:
         files: list[Path] = []
         for i, chunk in enumerate(chunks):
             out_path = self.tmp_dir / f"{i:04d}.wav"
+            if chunk == PAUSE_MARKER:
+                self._generate_silence_wav(out_path)
+                files.append(out_path)
+                logger.info(f"[tts] PAUSE [{i+1}/{len(chunks)}] -> {out_path.name}")
+                continue
             try:
                 query_resp = requests.post(
                     f"{self.voicevox_host}/audio_query",

@@ -74,6 +74,7 @@ class ContentItem:
     body: str            # 本文または要約テキスト
     source: str          # プラグイン名（"timetree", "news" 等）
     metadata: dict       # プラグイン固有の追加情報（任意）
+    read_title: str      # 読み上げ用短縮タイトル（LLM 生成、未設定時は空文字）
 ```
 
 ### 3.2 AudioSegment
@@ -158,6 +159,7 @@ class BasePlugin(ABC):
 |---|---|---|
 | Google ニュース（総合） | `https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja` | トップニュース |
 | NHK トップ | `https://www3.nhk.or.jp/rss/news/cat0.xml` | 公共放送・速報性 |
+| 毎日新聞（速報） | `https://mainichi.jp/rss/etc/mainichi-flash.rss` | 速報ニュース |
 
 > Google ニュースの RSS は認証不要・無料。複数メディアの記事が集約されるため幅広いトピックをカバーできる。カテゴリ別フィード（国内・経済・テクノロジー等）も同様に利用可能。
 
@@ -171,14 +173,19 @@ class BasePlugin(ABC):
 6. `logs/YYYYMMDD_news.yaml` にニュースログを書き出す
 7. `ContentItem` に変換して返す
 
-**LLM 要約プロンプト（1件ごと）**
+**LLM バッチ要約プロンプト**
 
 ```
-以下のニュース記事を、ラジオで読み上げるための日本語で2〜4文に要約してください。
+以下の{n}件のニュース記事を、それぞれラジオで読み上げるための日本語に変換してください。
 語尾は「〜です。〜ます。」調で統一し、固有名詞はそのまま使用してください。
+記号や括弧は使わず、自然に読み上げられる文章にしてください。
 
-タイトル: {title}
-本文: {body}
+各記事について以下の2つを生成してください：
+- title: 記事を10文字以内で表す読み上げ用短縮タイトル（例：「日銀の発表」「米中の関係」）
+- summary: 2〜4文の要約
+
+必ず以下のJSON形式のみで返してください（他のテキストは不要）:
+{"articles": [{"title": "短縮タイトル1", "summary": "要約1"}, ...]}
 ```
 
 **Gemini API 利用について**
@@ -202,6 +209,7 @@ articles:
     article_url: "https://actual-article.example.com/..."
     published_at: "2026-03-04T06:00:00+09:00"
     raw_body: "元の記事本文（feedparser の summary フィールド）"
+    read_title: "日銀の発表"
     summary: "要約後のテキスト（Gemini API の出力）"
 ```
 
@@ -216,17 +224,24 @@ articles:
 | `article_url` | 記事本文へのリンク（feedparser の `link`） |
 | `published_at` | 記事の公開日時（ISO 8601、不明時は空文字） |
 | `raw_body` | 要約前の記事テキスト（feedparser の `summary`） |
+| `read_title` | LLM が生成した読み上げ用短縮タイトル（10文字以内） |
 | `summary` | Gemini API による要約テキスト |
 
 **format() の出力例**
 
 ```
 続いて、本日のニュースをお伝えします。
-1件目。政府は〇〇の方針を決定しました。〜〜〜。
-2件目。〇〇社は新製品を発表しました。〜〜〜。
+[PAUSE]
+1件目。政府の方針。政府は〇〇の方針を決定しました。〜〜〜。
+[PAUSE]
+2件目。新製品発表。〇〇社は新製品を発表しました。〜〜〜。
+[PAUSE]
 （中略）
 以上、本日のニュースをお伝えしました。
 ```
+
+- `[PAUSE]` は TTSModule が 1 秒の無音 WAV に変換する特殊マーカー
+- 各ニュースの冒頭には LLM が生成した短縮タイトルを付ける（例：「政府の方針。」）
 
 ---
 
@@ -292,6 +307,11 @@ articles:
 
 - 1回の API 呼び出しあたり最大 **200文字** を目安に分割
 - 句点（。）で区切る
+
+**PAUSE_MARKER の処理**
+
+- テキスト中の `[PAUSE]` は単独チャンクとして扱う
+- 合成ループで `[PAUSE]` を検出した場合、VOICEVOX を呼ばず **1秒の無音 WAV** を生成する（Python 標準 `wave` モジュールを使用）
 
 ### 5.4 PlayerModule
 

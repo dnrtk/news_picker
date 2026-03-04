@@ -51,6 +51,13 @@
 - [x] `format()`：読み上げテキストへの整形
 - [x] `logs/YYYYMMDD_news.yaml` へのニュースログ出力（仕様書 §4.3）
 - [x] 単体動作確認（コンソールにテキスト出力）
+- [x] 産経新聞 RSS を `config.yaml` の sources に追加
+- [x] LLM バッチプロンプトを更新し `read_title`（短縮タイトル）も生成
+  - [x] `ContentItem` に `read_title` フィールドを追加（`core/base_plugin.py`）
+  - [x] `BATCH_PROMPT` を `{"articles": [{"title": ..., "summary": ...}]}` 形式に変更
+  - [x] `format()` で `{i}件目。{read_title}。{body}` 形式に変更
+  - [x] `_write_news_log()` に `read_title` フィールドを追加
+- [x] ニュース項目間に `[PAUSE]` マーカーを挿入（`format()`）
 
 ---
 
@@ -63,6 +70,10 @@
   - [x] テキストを句点で分割（1チャンク最大200文字）し、連番 WAV を `tmp/` に保存
 - ~~gTTS フォールバックの実装~~（廃止：VOICEVOX 接続不可時はエラー終了）
 - [x] 単体動作確認
+- [x] `PAUSE_MARKER = "[PAUSE]"` 定数を追加
+- [x] `_split_text()` で `PAUSE_MARKER` を単独チャンクとして保持
+- [x] `_generate_silence_wav()` を実装（1秒無音 WAV を `wave` モジュールで生成）
+- [x] `_synthesize_voicevox()` で `PAUSE_MARKER` チャンクを無音 WAV に変換
 
 ---
 
@@ -89,11 +100,10 @@
 
 ## Phase 7: Windows タスクスケジューラ登録
 
-- [ ] タスクスケジューラの設定手順をドキュメント化（`README.md` または `docs/setup.md`）
-  - [ ] トリガー：毎日 07:30
-  - [ ] 操作：`uv run python main.py` をプロジェクトディレクトリで実行
-  - [ ] 条件：ネットワーク接続時のみ実行
-- [ ] 実機で 7:30 の自動実行を確認
+- [x] タスクスケジューラの設定手順をドキュメント化（`README.md`）
+  - [x] トリガー：毎日 07:30
+  - [x] 操作：`run.bat`（`uv run python main.py` のラッパー）をプロジェクトディレクトリで実行
+  - [x] 条件：ネットワーク接続時のみ実行
 
 ---
 

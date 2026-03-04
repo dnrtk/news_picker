@@ -8,6 +8,7 @@ class ContentItem:
     body: str
     source: str
     metadata: dict = field(default_factory=dict)
+    read_title: str = ""
 
 
 class BasePlugin(ABC):
